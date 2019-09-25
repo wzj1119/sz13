@@ -10,6 +10,7 @@
 #define BACKLOG 100
 #define SIZE 1024*1024
 #define MYSIZE 1024*1024*10
+
 struct event_base*base;
 struct sock_ev
 {
@@ -39,6 +40,7 @@ void on_read(int sockfd,short event,void*arg)
 {
 	struct event*write_ev;
 	int recvsize;
+	int m_RecivedSize=0;
 	struct sock_ev*ev=(struct sock_ev*)arg;
 	ev->buf=(unsigned char*)malloc(SIZE);
 	ev->buffer=(unsigned char*)malloc(MYSIZE);
@@ -52,87 +54,105 @@ void on_read(int sockfd,short event,void*arg)
     //  event_set(ev->write_ev,sockfd,EV_WRITE,on_write,ev->sendbuf);
     //  event_base_set(base,ev->write_ev);
     //  event_add(ev->write_ev,NULL);
-	strcat(ev->buffer,ev->buf);
+//	strcpy(ev->buffer,ev->buf);
+	while(recvsize>0)
+	{
+		memcpy(ev->buffer,ev->buf,recvsize);
+		m_RecivedSize +=recvsize;
+	}
 	if(recvsize==0)
 	{
 		release_sock_event(ev);
 		close(sockfd);
 		return;
 	}
-	
-	if(strlen(ev->buffer)>=25)
+	for(int i=0;i<m_RecivedSize-2;++i)
 	{
-		int len=0;
-		event_set(ev->write_ev,sockfd,EV_WRITE,on_write,ev->sendbuf);
-	        event_base_set(base,ev->write_ev);
-        	event_add(ev->write_ev,NULL);
+		
+		if(ev->buffer[i]==0x40 && ev->buffer[i+1]==0x40)
+		{
+			int len=0;
+			int n=0;
+			int btype=0;
+			event_set(ev->write_ev,sockfd,EV_WRITE,on_write,ev->sendbuf);
+	        	event_base_set(base,ev->write_ev);
+        		event_add(ev->write_ev,NULL);
+			
+			unsigned char startflag[128]=" ";
+			strncpy(startflag,ev->buffer[i],4);
+			unsigned char Id[128]=" ";
+			strncpy(Id,ev->buffer[i+4],8);
+			unsigned char fileType[128]=" ";
+			strncpy(fileType,ev->buffer[i+12],2);
+	//		uint8_t btype=ev->buffer[i+12]&0x0F;
+			sscanf(fileType,"%x",&btype);
+			unsigned char eventType[128]=" ";
+			strncpy(eventType,ev->buffer[i+14],2);
+			unsigned char cannelId[128]=" ";
+			strncpy(cannelId,ev->buffer[i+16],2);
+			unsigned char moId[128]=" ";
+			strncpy(moId,ev->buffer[i+18],12);
+			unsigned char move[128]=" ";
+			strncpy(move,ev->buffer[i+30],8);
+			unsigned char bytesLength[128]=" ";
+			strncpy(bytesLength,ev->buffer[i+38],8);
+			sscanf(bytesLength,"%x",&n);
+			unsigned char*data;
+			data=(unsigned char*)malloc(1024*1024);
+			memset(data,0,sizeof(data));
+			strncpy(data,ev->buffer[i+46],n);
+			unsigned char endflag[128]=" ";
+			strncpy(endflag,ev->buffer[i+46+n*2],2);
+			printf("1:%s 2:%s 3:%d 4:%s 5:%s 6:%s 7:%s 8:%d 9:%s 10:%s \n",startflag,Id,btype,eventType,cannelId,moId,move,n,data,endflag);	
+			if(btype==0)
+			{
 
-		unsigned char startflag[128]=" ";
-		strncpy(startflag,ev->buffer,3);
-		unsigned char Id[128]=" ";
-		strncpy(Id,ev->buffer+2,4);
-		unsigned char fileType[128]=" ";
-		strncpy(fileType,ev->buffer+6,1);
-		uint8_t btype=ev->buffer[len+6]&0xF0;
-		unsigned char eventType[128]=" ";
-		strncpy(eventType,ev->buffer+7,1);
-		unsigned char cannelId[128]=" ";
-		strncpy(cannelId,ev->buffer+8,1);
-		unsigned char moId[128]=" ";
-		strncpy(moId,ev->buffer+9,6);
-		unsigned char move[128]=" ";
-		strncpy(move,ev->buffer+15,4);
-		unsigned char bytesLength[128]=" ";
-		strncpy(bytesLength,ev->buffer+19,5);
-		unsigned char*data;
-		data=(unsigned char*)malloc(1024*1024);
-		memset(data,0,sizeof(data));
-		strncpy(data,ev->buffer+24,recvsize-27);
-		unsigned char endflag[128]=" ";
-		strncpy(endflag,ev->buffer+recvsize-3,2);
-		printf("1:%s 2:%s 3:%s 4:%s 5:%s 6:%s 7:%s 8:%s 9:%s 10:%s \n",startflag,Id,fileType,eventType,cannelId,moId,move,bytesLength,data,endflag);	
-		if(btype==0x00)
-		{
-
-			FILE *fp=NULL;
-			fp=fopen("file/pecture.jpg","a+");
-			if(NULL==fp)
-			{
-				perror("fopen failed");
-				return;
+				FILE *fp=NULL;
+				fp=fopen("file/pecture.jpg","a+");
+				if(NULL==fp)
+				{
+					perror("fopen failed");
+					return;
+				}
+				fprintf(fp,"%s\n",data);
+			//	fwrite(data,1,strlen(data),fp);
+				fclose(fp);
 			}
-			fprintf(fp,"%s\n",data);
-		//	fwrite(data,1,strlen(data),fp);
-			fclose(fp);
-		}
-		else if(btype==0x10)
-		{
-			FILE*fp=NULL;
-			fp=fopen("file/vedio.mp4","a+");
-			if(NULL==fp)
+			else if(btype==1)
 			{
-				perror("fopen filed");
-				return;
+				FILE*fp=NULL;
+				fp=fopen("file/vedio.mp4","a+");
+				if(NULL==fp)
+				{
+					perror("fopen filed");
+					return;
+				}
+				fprintf(fp,"%s\n",data);
+			//	fwrite(data,1,strlen(data),fp);
+				fclose(fp);
 			}
-			fprintf(fp,"%s\n",data);
-		//	fwrite(data,1,strlen(data),fp);
-			fclose(fp);
-		}
-		else
-		{
-			FILE*fp=NULL;
-			fp=fopen("file/1file","a+");
-			if(NULL==fp)
+			else
 			{
-				perror("fopen filed");
-				return;
+				FILE*fp=NULL;
+				fp=fopen("file/1file","a+");
+				if(NULL==fp)
+				{
+					perror("fopen filed");
+					return;
+				}
+					fprintf(fp,"%s\n",data);
+				//	fwrite(data,1,strlen(data),fp);
+					fclose(fp);
 			}
-			fprintf(fp,"%s\n",data);
-		//	fwrite(data,1,strlen(data),fp);
-			fclose(fp);
+			m_RecivedSize-=n+52;
+			free(data);
 		}
-		free(data);
-	}	
+		if(m_RecivedSize<=i+25)
+		{
+			break;	
+		}
+	}
+	
 	
 }
 void on_accept(int sockfd,short event,void*arg)
