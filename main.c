@@ -1,172 +1,182 @@
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <string.h>
-#include <event2/event.h>
-#include <event2/bufferevent.h>
-#include <event2/listener.h>
-#include <event2/buffer.h>
+#include<sys/socket.h>
+#include<sys/types.h>
+#include<netinet/in.h>
+#include<stdio.h>
+#include<string.h>
+#include<stdlib.h>
+#include<event.h>
 
-#define MAX_MSG_LEN             1024 * 1024
-#define RECVSIZE                1024 * 100
+#define PORT 21030
+#define BACKLOG 100
+#define SIZE 1024*1024
+#define MYSIZE 1024*1024*10
 
-uint8_t         m_RecvBuffer[MAX_MSG_LEN];
-int             m_nRecvedSize = 0;
-
-void saveH264File(unsigned char *buffer,int len, char* h264FileName)
+struct event_base*base;
+struct sock_ev
 {
-    FILE *fp;
-    fp = fopen(h264FileName,"ab+");
-    fwrite(buffer,1,len,fp);
-    fclose(fp);
+    struct event*read_ev;
+    struct event*write_ev;
+    unsigned char*buf;
+    unsigned char*buffer;
+    unsigned char*sendbuf;
+};
+void release_sock_event(struct sock_ev*ev)
+{
+    event_del(ev->read_ev);
+    free(ev->read_ev);
+    free(ev->write_ev);
+    free(ev->buf);
+    free(ev->buffer);
+    free(ev->sendbuf);
+    free(ev);
 }
-
-
-// read callback
-void read_cb(struct bufferevent *bev, void *arg)
+void on_write(int sockfd,short event,void*arg)
 {
-    int recvlen = 0;
-//    struct evbuffer* buf = (struct evbuffer*)arg;
-
-    // read data from cache
-    uint8_t cRecvBuff[RECVSIZE];
-    memset(cRecvBuff, 0, RECVSIZE);
-
-    while((recvlen = bufferevent_read(bev, cRecvBuff, RECVSIZE)) > 0)
+    unsigned char *sendbuf=(unsigned char*)arg;
+    send(sockfd,sendbuf,6,0);
+    free(sendbuf);
+}
+void on_read(int sockfd,short event,void*arg)
+{
+    struct event*write_ev;
+    int recvsize;
+    struct sock_ev*ev=(struct sock_ev*)arg;
+    ev->buf=(unsigned char*)malloc(SIZE);
+    ev->buffer=(unsigned char*)malloc(MYSIZE);
+    ev->sendbuf=(unsigned char*)malloc(6);
+    bzero(ev->buf,SIZE);
+    bzero(ev->buffer,MYSIZE);
+    bzero(ev->sendbuf,6);
+    strcpy(ev->sendbuf,"@@0##");
+    recvsize=recv(sockfd,ev->buf,SIZE,0);
+    printf("recv data:%s,size:%d\n",ev->buffer,recvsize);
+    //  event_set(ev->write_ev,sockfd,EV_WRITE,on_write,ev->sendbuf);
+    //  event_base_set(base,ev->write_ev);
+    //  event_add(ev->write_ev,NULL);
+    strcpy(ev->buffer,ev->buf);
+    if(recvsize==0)
     {
-        // copy data from cRecvBuff to m_RecvBuffer
-        memcpy(m_RecvBuffer+m_nRecvedSize, cRecvBuff, recvlen);
-        m_nRecvedSize += recvlen;
-
-//        evbuffer_add(buf, cRecvBuff, recvlen);
+        release_sock_event(ev);
+        close(sockfd);
+        return;
     }
 
-
-    // sticky packet processing
-    while(1)
+    if(strlen(ev->buffer)>=25)
     {
-        int len = 0;
-        for (len = 0; len < m_nRecvedSize-4; ++len)
-        {
-           if((m_RecvBuffer[len] == 0x30) && (m_RecvBuffer[len + 1] == 0x31) &&
-              (m_RecvBuffer[len + 2] == 0x63) && (m_RecvBuffer[len + 3] == 0x64))
-           {
-               break;
-           }
-        }
+        int len=0;
+        int n=0;
+        int btype=0;
+        event_set(ev->write_ev,sockfd,EV_WRITE,on_write,ev->sendbuf);
+        event_base_set(base,ev->write_ev);
+        event_add(ev->write_ev,NULL);
 
-        if(len + 4 >= m_nRecvedSize)
+        unsigned char startflag[128]=" ";
+        strncpy(startflag,ev->buffer,2);
+        unsigned char Id[128]={0};
+        strncpy(Id,ev->buffer+2,4);
+        unsigned char fileType[128]={0};
+        strncpy(fileType,ev->buffer+6,1);
+        sscanf(fileType,"%x",&btype);
+        unsigned char eventType[128]={0};
+        strncpy(eventType,ev->buffer+7,1);
+        unsigned char cannelId[128]={0};
+        strncpy(cannelId,ev->buffer+8,1);
+        unsigned char moId[128]={0};
+        strncpy(moId,ev->buffer+9,6);
+        unsigned char move[128]={0};
+        strncpy(move,ev->buffer+15,4);
+        unsigned char bytesLength[128]={0};
+        strncpy(bytesLength,ev->buffer+19,4);
+        sscanf(bytesLength,"%x",&n);
+        unsigned char*data;
+        data=(unsigned char*)malloc(1024*1024);
+        memset(data,0,sizeof(data));
+        strncpy(data,ev->buffer+23,n);
+        unsigned char endflag[128]={0};
+        strncpy(endflag,ev->buffer+23+n,4);
+        printf("1:%s 2:%s 3:%d 4:%s 5:%s 6:%s 7:%s 8:%d 9:%s 10:%s \n",startflag,Id,btype,eventType,cannelId,moId,move,n,data,endflag);
+          if(btype==0)
         {
-           memset(m_RecvBuffer, 0, MAX_MSG_LEN);
-           m_nRecvedSize = 0;
-        }
 
-        if(len + 32 >= m_nRecvedSize)
-        {
-           break;
+            FILE *fp=NULL;
+            fp=fopen("/home/wzj/worktest/15s/file/pecture.jpg","a+");
+            if(NULL==fp)
+            {
+                perror("fopen failed");
+                return;
+            }
+            fprintf(fp,"%s\n",data);
+          //  fwrite(data,1,strlen(data),fp);
+            fclose(fp);
         }
-
-        uint8_t btype = m_RecvBuffer[len + 15] & 0xF0;
-        int datalenIndex = 0;
-        int datalen = 0;
-
-        if((btype == 0x00) || (btype == 0x10) || (btype == 0x20))  // video
+        else if(btype==1)
         {
-           datalenIndex = len + 28;
+            FILE*fp=NULL;
+            fp=fopen("/home/wzj/worktest/15s/file/vedio.mp4","a+");
+            if(NULL==fp)
+            {
+                perror("fopen filed");
+                return;
+            }
+           fprintf(fp,"%s\n",data);
+          //  fwrite(data,1,strlen(data),fp);
+            fclose(fp);
         }
-        else if(btype == 0x30) // audio
+        else
         {
-           datalenIndex = len + 24;
+            FILE*fp=NULL;
+            fp=fopen("/home/wzj/worktest/15s/file/1file","a+");
+            if(NULL==fp)
+            {
+                perror("fopen filed");
+                return;
+            }
+           fprintf(fp,"%s\n",data);
+        //    fwrite(data,1,strlen(data),fp);
+            fclose(fp);
         }
-        else if (btype == 0x40)  // touchuan
-        {
-           datalenIndex = len + 16;
-        }
-
-        datalen = m_RecvBuffer[datalenIndex] * 256 + m_RecvBuffer[datalenIndex + 1];
-        int videoIndex = datalenIndex + 2;
-        if(videoIndex + datalen > m_nRecvedSize)
-        {
-           break;
-        }
-
-        if((btype == 0x00) || (btype == 0x10) || (btype == 0x20))
-        {
-            saveH264File(m_RecvBuffer+videoIndex, datalen, "test.h264");
-        }
-        else if(btype == 0x30)
-        {
-           // nothing
-        }
-
-        memcpy(m_RecvBuffer, m_RecvBuffer + videoIndex + datalen, m_nRecvedSize);
-        m_nRecvedSize -= (videoIndex + datalen);
+         free(data);
     }
-
 }
-
-void write_cb(struct bufferevent *bev, void *arg)
+void on_accept(int sockfd,short event,void*arg)
 {
-    printf("data is sent to client!\n");
+    struct sockaddr_in cli_addr;
+    int newfd,sin_size;
+    struct sock_ev*ev=(struct sock_ev*)malloc(sizeof(struct sock_ev));
+    ev->read_ev=(struct event*)malloc(sizeof(struct event));
+    ev->write_ev=(struct enevt*)malloc(sizeof(struct event));
+    sin_size=sizeof(struct sockaddr_in);
+    newfd=accept(sockfd,(struct sockaddr*)&cli_addr,&sin_size);
+    printf("accept success\n");
+    event_set(ev->read_ev,newfd,EV_READ|EV_PERSIST,on_read,ev);
+    event_base_set(base,ev->read_ev);
+    event_add(ev->read_ev,NULL);
 }
-
-
-void event_cb(struct bufferevent *bev, short events, void *arg)
+int main(int argc,char*argv[])
 {
-    if(events & BEV_EVENT_EOF)
+    struct sockaddr_in addr;
+    int sockfd=-1;
+    event_init();
+    sockfd=socket(AF_INET,SOCK_STREAM,0);
+    if(-1==sockfd)
     {
-        printf("connnection closed!\n");
+        perror("socket");
+        return 1;
     }
-    else if(events & BEV_EVENT_ERROR)
-    {
-        printf("some other error\n");
-    }
+    int yes=1;
+    setsockopt(sockfd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(int));
+    memset(&addr,0,sizeof(addr));
+    addr.sin_family=AF_INET;
+    addr.sin_port=htons(PORT);
+    addr.sin_addr.s_addr=INADDR_ANY;
+    bind(sockfd,(struct sockaddr*)&addr,sizeof(addr));
+    listen(sockfd,BACKLOG);
+    struct event listen_ev;
+    base=event_base_new();
+    event_set(&listen_ev,sockfd,EV_READ|EV_PERSIST,on_accept,NULL);
+    event_base_set(base,&listen_ev);
+    event_add(&listen_ev,NULL);
+    event_base_dispatch(base);
 
-    bufferevent_free(bev);
-}
-
-void listen_cb(struct evconnlistener* listener, evutil_socket_t fd, struct sockaddr *addr,
-               int len, void *ptr)
-{
-    printf("new connection!\n");
-    struct event_base* base = (struct event_base*)ptr;
-
-    struct bufferevent* bev = NULL;
-    bev = bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
-
-    //struct evbuffer *buf = evbuffer_new();
-
-    bufferevent_setcb(bev, read_cb, write_cb, event_cb, NULL);
-
-    bufferevent_enable(bev, EV_READ);
-}
-
-int main(int argc, char *argv[])
-{
-   struct event_base* base = event_base_new();
-
-   // init server info
-   struct sockaddr_in serv;
-   memset(&serv, 0, sizeof(serv));
-   serv.sin_family = AF_INET;
-   serv.sin_port = htons(8888);
-   serv.sin_addr.s_addr = htonl(INADDR_ANY);
-
-
-   struct evconnlistener* listen = NULL;
-   listen = evconnlistener_new_bind(base, listen_cb, base,
-                                    LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE,
-                                    -1, (struct sockaddr*)&serv, sizeof(serv));
-
-   printf("server start......!\n");
-   // loop
-   event_base_dispatch(base);
-
-   //release resource
-   evconnlistener_free(listen);
-   event_base_free(base);
-
-   return 0;
+    return 0;
 }
