@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -9,17 +8,15 @@
 #include <event2/bufferevent.h>
 #include <event2/listener.h>
 #include <event2/buffer.h>
-//#define SavePSize               1024*1024*10
-//#define SaveMSize               1024*1024*10
+#define SavePSize               32
+#define SaveMSize               32
 #define MAX_MSG_LEN             1024 * 1024
 #define RECVSIZE                1024 * 10
 
 uint8_t         m_RecvBuffer[MAX_MSG_LEN];
 int             m_nRecvedSize = 0;
-//int             m_RecvPSize=0;
-//int             m_RecvMSize=0;
-//uint8_t         SavePBuff[SavePSize];
-//uint8_t         SaveMBuff[SaveMSize];
+uint8_t         pName[SavePSize];
+uint8_t         vName[SaveMSize];
 
 void save15sFile(unsigned char *buffer,int len, char* h15sFileName)
 {
@@ -60,11 +57,14 @@ void read_cb(struct bufferevent *bev, void *arg)
               memset(m_RecvBuffer, 0, MAX_MSG_LEN);
               m_nRecvedSize = 0;
         }
-
         if(len + 25 >= m_nRecvedSize)
         {
             break;
         }
+        int Id=0;
+        int IdIndex=0;
+        IdIndex=len+2;  //文件ID起始字节
+        Id=(m_RecvBuffer[IdIndex]<<24| m_RecvBuffer[IdIndex+1]<<16 |m_RecvBuffer[IdIndex+2]<<8 | m_RecvBuffer[IdIndex+3]);
         uint8_t btype=m_RecvBuffer[len+6]&0xFF;
         int datalenIndex = 0;
         int datalen = 0;
@@ -77,16 +77,21 @@ void read_cb(struct bufferevent *bev, void *arg)
             break;
         }
         if(btype == 0x00)
-        {
-             // memcpy(SavePBuff+m_RecvPSize,m_RecvBuffer+dataIndex,datalen);
-             // m_RecvPSize+=datalen;
-             save15sFile(m_RecvBuffer+dataIndex, datalen, "/home/wzj/worktest/15swork/file/15stest.jpg");
+        {  
+            // save15sFile(m_RecvBuffer+dataIndex, datalen, "/home/wzj/worktest/15swork/file/15stest.jpg");
+            memset(pName,0,SavePSize);
+            sprintf(pName,"/home/wzj/worktest/15swork/file/%d.jpg",Id);
+            save15sFile(m_RecvBuffer+dataIndex, datalen, pName);
+        //    memset(pName,0,SavePSize);
         }
         else if(btype==0x01)
         {
-            //memcpy(SaveMBuff+m_RecvMSize,m_RecvBuffer+dataIndex,datalen);
-            //m_RecvMSize+=datalen;
-           save15sFile(m_RecvBuffer+dataIndex,datalen,"/home/wzj/worktest/15swork/file/15stest.mp4");
+
+          // save15sFile(m_RecvBuffer+dataIndex,datalen,"/home/wzj/worktest/15swork/file/15stest.mp4");
+            memset(vName,0,SaveMSize);
+            sprintf(vName,"/home/wzj/worktest/15swork/file/%d.mp4",Id);
+            save15sFile(m_RecvBuffer+dataIndex,datalen,vName);
+       //     memset(vName,0,SaveMSize);
         }
         else if(btype==0x02)
         {
@@ -95,17 +100,18 @@ void read_cb(struct bufferevent *bev, void *arg)
         memcpy(m_RecvBuffer, m_RecvBuffer +dataIndex+ datalen, m_nRecvedSize);
         m_nRecvedSize -=(dataIndex+datalen);
     }
-   //save15sFile(SavePBuff, strlen(SavePBuff),"/home/wzj/worktest/15swork/file/15stest.jpg");
-   //save15sFile(SaveMBuff, strlen(SaveMBuff),"/home/wzj/worktest/15swork/file/15stest.mp4");
 }
 
 void write_cb(struct bufferevent *bev, void *arg)
 {
-    uint8_t SendBuffer[6];
-    int sendlen=bufferevent_write(SendBuffer,"@@0##",6);
+    uint8_t SendBuffer[6]="@@0##";
+    int sendlen=bufferevent_write(bev,SendBuffer,6);
+    if(sendlen<=0)
+    {
+        printf("send failed...");
+    }
+
 }
-
-
 void event_cb(struct bufferevent *bev, short events, void *arg)
 {
     if(events & BEV_EVENT_EOF)
