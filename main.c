@@ -12,6 +12,8 @@
 #include "libmongoc-1.0/mongoc.h"
 #include "mongodb.h"
 
+typedef unsigned char byte;
+
 #define SavePSize               256
 #define MAX_MSG_LEN             1024 * 1024*10
 #define SavedataSize            1024 * 1024*5
@@ -20,12 +22,21 @@
 typedef struct _stCallback{
     uint8_t         cRecvBuff[RECVSIZE]; //循环接收数据
     uint8_t         m_RecvBuffer[MAX_MSG_LEN];//处理黏包
-    int             m_nRecvedSize;      //接收到的数据大小   
-    int             m_RecvdataSize;    //数据体大小
+    int             m_nRecvedSize;      //接收到的数据总大小
+    int             m_RecvdataSize;    //数据体总大小
     uint8_t         Savedata[SavedataSize]; //存数据体
     uint8_t         pName[SavePSize]; //存名称
+    uint8_t         Savesim[15];       //存sim号
+    uint8_t         Saveeventtype[6]; //存事件类型
+    uint8_t         Saveurl[96]; //存url（路径及文件名）
+    uint8_t         Savemediatype[6]; //存文件类型
+    uint8_t         Savemediaformat[6];//文件类型
+    uint8_t         Saveffmpeg[256];  //存ffmpeg要压缩的文件
+   // uint8_t         reback[6];
+
 }stCallback;
 
+//生成文件
 void save15sFile(unsigned char *buffer,int len, char* h15sFileName)
 {
     FILE *fp=NULL;
@@ -34,57 +45,63 @@ void save15sFile(unsigned char *buffer,int len, char* h15sFileName)
     fclose(fp);
 }
 
+//视频压缩
+int ffmpeg(int fileId,char*arg)
+{
+    memset(arg,0,256);
+    sprintf(arg,"ffmpeg -i /home/wzj/worktest/15swork/file/%d.mp4 -r 10 -b:v 320k -b:a 32k -y /home/wzj/worktest/15swork/compressfileName/%d.mp4",fileId,fileId); //ffmppeg指令
+    FILE *fp=popen(arg,"r"); //建立管道
+    if(!fp)
+    {
+        return -1;
+    }
+    pclose(fp);
+    return 0;
+}
 
+//读回调
 void read_cb(struct bufferevent *bev, char*arg)
 {
-    int recvlen = 0;
-
+    int recvlen = 0;  //每次收到数据的长度
     stCallback *callback=(struct stCallback*)arg;
 
     // read data from cache
     memset(callback->cRecvBuff, 0, RECVSIZE);
-    recvlen = bufferevent_read(bev, callback->cRecvBuff, RECVSIZE);
+    recvlen = bufferevent_read(bev, callback->cRecvBuff, RECVSIZE); //接收数据
     if(recvlen > 0)
     {
         // copy data from cRecvBuff to m_RecvBuffer
-        printf("recv DataSize:%d\n",recvlen);
-        memcpy(callback->m_RecvBuffer+callback->m_nRecvedSize, callback->cRecvBuff, recvlen);
-        callback->m_nRecvedSize += recvlen;
+       // printf("recv DataSize:%d\n",recvlen);
+        memcpy(callback->m_RecvBuffer+callback->m_nRecvedSize, callback->cRecvBuff, recvlen); //将缓存中的数据存如m_RecvBuffer中，黏包处理
+        callback->m_nRecvedSize += recvlen;  //接收到的数据总大小为每次收到数据之和
     }
 
-    //processing
+    // 数据处理
    while(1)
   {
        int len=0;
-       if(callback->m_nRecvedSize < 25)
+       if(callback->m_nRecvedSize < 25)   //根据协议包头不足25，退出
        {
            break;
        }
-
-       //
-       if(callback->m_RecvBuffer[len]!=0x40 && callback->m_RecvBuffer[len+1]!=0x40)
+       if(callback->m_RecvBuffer[len]!=0x40 && callback->m_RecvBuffer[len+1]!=0x40)  //判断m_RecvBuff中前两个字节是否为头标识（##）
        {
-           printf("error!\n");
-           break;
+          printf("error!\n");
+          break;
        }
-
        int IdIndex=len+2;  //文件ID起始字节
-
-       int Id=(callback->m_RecvBuffer[IdIndex]<<24| callback->m_RecvBuffer[IdIndex+1]<<16 |callback->m_RecvBuffer[IdIndex+2]<<8 | callback->m_RecvBuffer[IdIndex+3]);
-       //int btype=callback->m_RecvBuffer[len+6];//文件类型
+       int Id=(callback->m_RecvBuffer[IdIndex]<<24| callback->m_RecvBuffer[IdIndex+1]<<16 |callback->m_RecvBuffer[IdIndex+2]<<8 | callback->m_RecvBuffer[IdIndex+3]);  //文件ID
+       int btype=callback->m_RecvBuffer[len+6];//文件类型
        int eventType=callback->m_RecvBuffer[len+7];//事件类型
-
+       memset(callback->Savesim,0,15);
+       sprintf(callback->Savesim,"%x%02x%02x%02x%02x%02x",callback->m_RecvBuffer[len+9],callback->m_RecvBuffer[len+10],callback->m_RecvBuffer[len+11],callback->m_RecvBuffer[len+12],callback->m_RecvBuffer[len+13],callback->m_RecvBuffer[len+14]);
        int datalenIndex = len + 19;   //数据体长度起始字节
-
-     //  printf("%X, %X, %X, %X", callback->m_RecvBuffer[datalenIndex], callback->m_RecvBuffer[datalenIndex+1], callback->m_RecvBuffer[datalenIndex+2], callback->m_RecvBuffer[datalenIndex+3]);
+       //数据体长度
        int datalen=(callback->m_RecvBuffer[datalenIndex]<<24 | callback->m_RecvBuffer[datalenIndex+1]<<16 | callback->m_RecvBuffer[datalenIndex+2]<<8 | callback->m_RecvBuffer[datalenIndex+3]);
 
-    //   if(datalen == 0)
-    //   {
-    //      printf("end of file\n");
-    //   }
-      int dataIndex=datalenIndex+4;  //数据体内容起始字节
-       printf("len:%d\n",datalen);
+       int dataIndex=datalenIndex+4;  //数据体内容起始字节
+      // printf("len:%d\n",datalen);
+
        if(25+datalen>callback->m_nRecvedSize)
        {
             break;
@@ -92,67 +109,82 @@ void read_cb(struct bufferevent *bev, char*arg)
 
        if(datalen>0)
        {
-           memcpy(callback->Savedata+callback->m_RecvdataSize,callback->m_RecvBuffer+dataIndex,datalen);
-           callback->m_RecvdataSize+=datalen;
-       }
 
+           memcpy(callback->Savedata+callback->m_RecvdataSize,callback->m_RecvBuffer+dataIndex,datalen); //当datalen>0时，将每包数据的数据体内容不断的存到Savedata中
+           callback->m_RecvdataSize+=datalen;  //数据体总大小为每次收到数据体长度之和
+        }
 
-      if(datalen==0)
+      if(datalen==0) //当收到的数据中数据体长度为0时，把数据存成文件并存入MongoDB
       {
-           printf("end of file\n");
-           if(2==eventType)
+           printf("end of file, 发送结束符号到终端设备!\n");
+
+          // char reback[]={0x40,0x40,0x00,0x23,0x23};
+          // bufferevent_write(bev,reback,sizeof(reback));
+
+           struct evbuffer *sendbuf = evbuffer_new();
+           byte msgHeader[2] = {'@', '@'};
+           byte status = 0;
+           byte msgTail[2] = {'#', '#'};
+           evbuffer_add(sendbuf, msgHeader, 2);
+           evbuffer_add(sendbuf, &status, 1);
+           evbuffer_add(sendbuf, msgTail, 2);
+
+           bufferevent_write_buffer(bev, sendbuf);  //发送消息到终端
+           evbuffer_free(sendbuf);
+
+           memset(callback->Saveeventtype,0,6);
+           sprintf(callback->Saveeventtype,"%d",eventType);  //事件类型转换为字符串
+
+            memset(callback->Saveurl,0,96);
+
+           memset(callback->Savemediatype,0,6);
+           sprintf(callback->Savemediatype,"%d",btype); //文件类型转换为字符串
+
+           memset(callback->Savemediaformat,0,6);
+           sprintf(callback->Savemediaformat,"%d",btype==0?btype:6);   //文件类型不为0则为6
+           if(2==eventType) //开关门图像
            {
                 memset(callback->pName,0,SavePSize);
-                sprintf(callback->pName,"/home/wzj/worktest/testproject/file/%d.jpg",Id);
+                sprintf(callback->pName,"/home/wzj/worktest/15swork/file/%d.jpg",Id);  //图片路径及名称
                 // sprintf(pName,"/root/15sMedia/file/%d.jpg",Id);
-                // save15sFile(callback->Savedata, datalen, callback->pName);
-                save15sFile(callback->Savedata,callback->m_RecvdataSize,callback->pName);
+                save15sFile(callback->Savedata,callback->m_RecvdataSize,callback->pName); //调用save15sFile
 
                 memset(callback->pName,0,SavePSize);
-                sprintf(callback->pName,"%d",Id);
-                MongoDB(callback->pName);
-             //  callback->m_RecvdataSize=0;
-            }
-            if(0==eventType || 1==eventType)
+                sprintf(callback->pName,"%d",Id);  //文件ID转换为字符串
+
+
+                sprintf(callback->Saveurl,"http://139.159.195.55:8080/home/wzj/worktest/15swork/file/%d.jpg",Id);  //url路径及图像文件名称
+                MongoDB(callback->pName,callback->Savesim,callback->Saveeventtype,callback->Saveurl,callback->Savemediatype,callback->Savemediaformat);  //将数据存入MongoDB
+
+           }
+            if(0==eventType || 1==eventType) //0：举报视频 1：紧急视频
             {
 
                 memset(callback->pName,0,SavePSize);
-                sprintf(callback->pName,"/home/wzj/worktest/testproject/file/%d.mp4",Id);
+                sprintf(callback->pName,"/home/wzj/worktest/15swork/file/%d.mp4",Id);  //视频存储路径及名称
              // sprintf(vName,"/root/15sMedia/file/%d.mp4",Id);
-             // save15sFile(callback->Savedata,datalen,callback->pName);
-                save15sFile(callback->Savedata,callback->m_RecvdataSize,callback->pName);
+                save15sFile(callback->Savedata,callback->m_RecvdataSize,callback->pName);//调用save15sFile
+
+                ffmpeg(Id,callback->Saveffmpeg);
 
                 memset(callback->pName,0,SavePSize);
                 sprintf(callback->pName,"%d",Id);
-                MongoDB(callback->pName);
 
-                memset(callback->pName,0,SavePSize);
-                sprintf(callback->pName,"ffmpeg -i /home/wzj/worktest/testproject/file/%d.mp4 -r 10 -b:v 320k -b:a 32k -y /home/wzj/worktest/testproject/compressfileName/%d.mp4",Id,Id);
-                // sprintf(callback->pName,"ffmpeg -i /root/15sMedia/file/%d.mp4 -r 10 -b:v 320k -b:a 32k -y /root/15sMedia/compressfileName/%d.mp4",Id,Id);
-                system(callback->pName);
-             // callback->m_RecvdataSize=0;
+                sprintf(callback->Saveurl,"http://139.159.195.55:8080/home/wzj/worktest/15swork/compressfileName/%d.mp4",Id); //url路径及视频文件名称
+                MongoDB(callback->pName,callback->Savesim,callback->Saveeventtype,callback->Saveurl,callback->Savemediatype,callback->Savemediaformat); //将数据存入MongoDB
             }
-
-              //   memset(callback->Savedata,0,callback->m_RecvdataSize);
-             callback->m_RecvdataSize=0;
-
+             callback->m_RecvdataSize=0;  //每次将数据存成文件后数据体总和清零
       }
-
-      callback->m_nRecvedSize -=(25+datalen);
-      memcpy(callback->m_RecvBuffer, callback->m_RecvBuffer+25 + datalen, callback->m_nRecvedSize);
-
-
+        callback->m_nRecvedSize -=(25+datalen);   //每包数据解析后，接收到的数据总长度减去此包长度
+        memcpy(callback->m_RecvBuffer, callback->m_RecvBuffer+25 + datalen, callback->m_nRecvedSize); //将解析完的每包数据取出
     }
 }
 
-void write_cb(struct bufferevent *bev, char*arg)
+void write_cb(struct bufferevent *bev, void*arg)
 {
-    char*SendBuffer=arg;
-    SendBuffer[6]="@@0##";
-    bufferevent_write(bev,SendBuffer,strlen(SendBuffer));
+   printf("recv success.............\n");
 
 }
-
 void event_cb(struct bufferevent *bev, short events, char*arg)
 {
     if(events & BEV_EVENT_EOF)
@@ -161,16 +193,14 @@ void event_cb(struct bufferevent *bev, short events, char*arg)
     }
     else if(events & BEV_EVENT_ERROR)
     {
-        printf("some other error\n");
+        printf("some other error %s\n",evutil_socket_error_to_string(EVUTIL_SOCKET_ERROR()));
     }
     stCallback *callback=(struct stCallback*)arg;
     free(callback);
     callback=NULL;
     printf("指针释放\n");
     bufferevent_free(bev);
-
 }
-
 
 void listen_cb(struct evconnlistener* listener, evutil_socket_t fd, struct sockaddr *addr,int len, void *ptr)
 {
@@ -183,8 +213,8 @@ void listen_cb(struct evconnlistener* listener, evutil_socket_t fd, struct socka
     callback->m_RecvdataSize=0;
     memset(callback, 0, sizeof (stCallback));
     bufferevent_setcb(bev,read_cb, write_cb, event_cb, callback);  //设置回调函数
-    bufferevent_enable(bev, EV_READ);//将读事件加入到监听列表
-    bufferevent_enable(bev, EV_WRITE);
+    bufferevent_enable(bev, EV_READ|EV_WRITE);//将读写事件加入到监听列表
+
 }
 
 
