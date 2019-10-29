@@ -25,15 +25,15 @@ typedef struct _stCallback{
      uint8_t          m_RecvBuffer[MAX_MSG_LEN];//处理黏包
      int              m_nRecvedSize;      //接收到的数据总大小
      int              m_RecvdataSize;    //数据体总大小
-     char          Savedata[SavedataSize]; //存数据体
-     char          pName[SavePSize]; //存名称
-     char          Savesim[15];       //存sim号
-     char          Saveeventtype[6]; //存事件类型
-     char          Saveurl[96]; //存url（路径及文件名）
-     char          Savemediatype[6]; //存文件类型
-     char          Savemediaformat[6];//文件类型
-     char          Saveffmpeg[256];  //存ffmpeg要压缩的文件
-     char          Savecurl[256];
+     char             Savedata[SavedataSize]; //存数据体
+     char             pName[SavePSize]; //存名称
+     char             Savesim[15];       //存sim号
+     char             Saveeventtype[6]; //存事件类型
+     char             Saveurl[96]; //存url（路径及文件名）
+     char             Savemediatype[6]; //存文件类型
+     char             Savemediaformat[6];//文件类型
+     char             Saveffmpeg[256];  //存ffmpeg要压缩的文件路径及文件名
+     char             Savecurl[256];    //存上传http文件路径及文件名
 }stCallback;
 
 //生成文件
@@ -115,8 +115,8 @@ void read_cb(struct bufferevent *bev, void*arg)
    while(1)
   {
        int len=0;
-       int num=0;
-       int ffmnum=0;
+      // int num=0;
+      // int ffmnum=0;
        int res=0;
        if(callback->m_nRecvedSize < 25)   //根据协议包头不足25，退出
        {
@@ -184,12 +184,12 @@ void read_cb(struct bufferevent *bev, void*arg)
                 memset(callback->pName,0,SavePSize);
                 sprintf(callback->pName,"/home/wzj/worktest/15svedio/file/%s%d.jpg",callback->Savesim,Id);  //图片路径及名称
                 // sprintf(pName,"/root/15sMedia/file/%s%d.jpg",callback->Savesim,Id);
-                num=save15sFile(callback->Savedata,callback->m_RecvdataSize,callback->pName); //调用save15sFile
-                if(num!=0)
+                res=save15sFile(callback->Savedata,callback->m_RecvdataSize,callback->pName); //调用save15sFile
+                if(res!=0)
                 {
                     qDebug("图像存入本地失败...");
                 }
-                if(0==num)
+                if(0==res)
                 {
                     qDebug("图像存入本地成功...");
                 }
@@ -211,21 +211,21 @@ void read_cb(struct bufferevent *bev, void*arg)
                 memset(callback->pName,0,SavePSize);
                 sprintf(callback->pName,"/home/wzj/worktest/15svedio/file/%s%d.mp4",callback->Savesim,Id);  //视频存储路径及名称
              // sprintf(vName,"/root/15sMedia/file/%s%d.mp4",callback->Savesim,Id);
-                num=save15sFile(callback->Savedata,callback->m_RecvdataSize,callback->pName);//调用save15sFile
-                if(num!=0)
+                res=save15sFile(callback->Savedata,callback->m_RecvdataSize,callback->pName);//调用save15sFile
+                if(res!=0)
                 {
                     qDebug("视频存入本地失败...");
                 }
-                if(0==num)
+                if(0==res)
                 {
                     qDebug("视频存入本地成功...");
                 }
-                ffmnum=ffmpeg(callback->Savesim,Id,callback->Saveffmpeg);
-                if(ffmnum!=0)
+                res=ffmpeg(callback->Savesim,Id,callback->Saveffmpeg);
+                if(res!=0)
                 {
                     qDebug("ffmpeg 压缩失败...");
                 }
-                if(0==ffmnum)
+                if(0==res)
                 {
                     qDebug("ffmpeg压缩成功...");
                 }
